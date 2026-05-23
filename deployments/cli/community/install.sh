@@ -390,9 +390,14 @@ function startServices() {
     fi
     /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH --env-file=$DOCKER_ENV_PATH ${START_ARGS}"
 
-    local migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=${SERVICE_FOLDER}_migrator")
+    local migrator_container_id=$(${CONTAINER_CMD} container ls -aq \
+        -f "label=com.docker.compose.project=${SERVICE_FOLDER}" \
+        -f "label=com.docker.compose.service=migrator")
     if [ -z "$migrator_container_id" ]; then
-        migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=${SERVICE_FOLDER}-migrator")
+        migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=${SERVICE_FOLDER}_migrator")
+        if [ -z "$migrator_container_id" ]; then
+            migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=${SERVICE_FOLDER}-migrator")
+        fi
     fi
     if [ -n "$migrator_container_id" ]; then
         local idx=0
@@ -421,9 +426,14 @@ function startServices() {
         fi
     fi
 
-    local api_container_id=$(${CONTAINER_CMD} container ls -q -f "name=${SERVICE_FOLDER}_api")
+    local api_container_id=$(${CONTAINER_CMD} container ls -q \
+        -f "label=com.docker.compose.project=${SERVICE_FOLDER}" \
+        -f "label=com.docker.compose.service=api")
     if [ -z "$api_container_id" ]; then
-        api_container_id=$(${CONTAINER_CMD} container ls -q -f "name=${SERVICE_FOLDER}-api")
+        api_container_id=$(${CONTAINER_CMD} container ls -q -f "name=${SERVICE_FOLDER}_api")
+        if [ -z "$api_container_id" ]; then
+            api_container_id=$(${CONTAINER_CMD} container ls -q -f "name=${SERVICE_FOLDER}-api")
+        fi
     fi
 
     # Verify container exists
@@ -446,7 +456,9 @@ function startServices() {
             echo ""
             echo "   API Service health check timed out after 5 minutes"
             echo "   Checking if API container is still running..."
-            if ${CONTAINER_CMD} ps | grep -q "${SERVICE_FOLDER}_api" || ${CONTAINER_CMD} ps | grep -q "${SERVICE_FOLDER}-api"; then
+            if ${CONTAINER_CMD} ps -q \
+                -f "label=com.docker.compose.project=${SERVICE_FOLDER}" \
+                -f "label=com.docker.compose.service=api" | grep -q .; then
                 echo "   API container is running but did not pass the health-check. Continuing without marking it ready."
                 api_ready=false
                 break
