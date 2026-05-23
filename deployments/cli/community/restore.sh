@@ -22,7 +22,7 @@ function restoreSingleVolume() {
     backupFolder=$2
     restoreFile=$3
 
-    docker volume rm "$selectedVolume" > /dev/null 2>&1
+    ${CONTAINER_CMD} volume rm "$selectedVolume" > /dev/null 2>&1
     
     if [ $? -ne 0 ]; then
         echo "Error: Failed to remove volume $selectedVolume"
@@ -30,14 +30,14 @@ function restoreSingleVolume() {
         return 1
     fi
 
-    docker volume create "$selectedVolume" > /dev/null 2>&1
+    ${CONTAINER_CMD} volume create "$selectedVolume" > /dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo "Error: Failed to create volume $selectedVolume"
         echo ""
         return 1
     fi
 
-    docker run --rm \
+    ${CONTAINER_CMD} run --rm \
         -e TAR_NAME="$restoreFile" \
         -v "$selectedVolume":"/vol" \
         -v "$backupFolder":/backup \
@@ -69,7 +69,7 @@ function restoreData() {
     local volume_suffix
     volume_suffix="_pgdata|_redisdata|_uploads|_rabbitmq_data"
     local volumes
-    volumes=$(docker volume ls -f "name=plane-app" --format "{{.Name}}" | grep -E "$volume_suffix")
+    volumes=$(${CONTAINER_CMD} volume ls -f "name=plane-app" --format "{{.Name}}" | grep -E "$volume_suffix")
     # Check if there are any matching volumes
     if [ -z "$volumes" ]; then
         echo ".....No volumes found starting with 'plane-app'"
@@ -89,7 +89,7 @@ function restoreData() {
             echo "Found $BACKUP_FILE"
 
             local docVol
-            docVol=$(docker volume ls -f "name=$restoreVolName" --format "{{.Name}}" | grep -E "$volume_suffix")
+            docVol=$(${CONTAINER_CMD} volume ls -f "name=$restoreVolName" --format "{{.Name}}" | grep -E "$volume_suffix")
 
             if [ -z "$docVol" ]; then
                 echo "Skipping: No volume found with name $restoreVolName"
@@ -112,12 +112,49 @@ function restoreData() {
     echo ""
 }
 
-# if docker-compose is installed
-if command -v docker-compose &> /dev/null
-then
-    COMPOSE_CMD="docker-compose"
-else
-    COMPOSE_CMD="docker compose"
+ORCHESTRATOR="podman"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --orchestrator)
+            ORCHESTRATOR="$2"
+            shift 2
+            ;;
+        --orchestrator=*)
+            ORCHESTRATOR="${1#*=}"
+            shift 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+ORCHESTRATOR="$(echo "${ORCHESTRATOR}" | tr '[:upper:]' '[:lower:]')"
+CONTAINER_CMD=""
+COMPOSE_CMD=""
+case "${ORCHESTRATOR}" in
+    podman)
+        CONTAINER_CMD="podman"
+        COMPOSE_CMD="podman compose"
+        ;;
+    docker)
+        CONTAINER_CMD="docker"
+        if command -v docker-compose &> /dev/null; then
+            COMPOSE_CMD="docker-compose"
+        else
+            COMPOSE_CMD="docker compose"
+        fi
+        ;;
+    *)
+        echo "Unsupported orchestrator '${ORCHESTRATOR}'. Use 'podman' or 'docker'."
+        exit 1
+        ;;
+esac
+
+if ! command -v "${CONTAINER_CMD}" &> /dev/null; then
+    echo "${CONTAINER_CMD} is not installed or not in PATH."
+    exit 1
 fi
 
 restoreData "$@"

@@ -1,5 +1,5 @@
 #!/bin/bash
-+set -euo pipefail
+set -euo pipefail
 
 function print_header() {
 clear
@@ -133,12 +133,42 @@ function restoreData() {
 }
 
 # if docker-compose is installed
-if command -v docker-compose &> /dev/null
-then
-    COMPOSE_CMD="docker-compose"
-else
-    COMPOSE_CMD="docker compose"
-fi
+ORCHESTRATOR="podman"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --orchestrator)
+            ORCHESTRATOR="$2"
+            shift 2
+            ;;
+        --orchestrator=*)
+            ORCHESTRATOR="${1#*=}"
+            shift 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+ORCHESTRATOR="$(echo "${ORCHESTRATOR}" | tr '[:upper:]' '[:lower:]')"
+COMPOSE_CMD=""
+case "${ORCHESTRATOR}" in
+    podman)
+        COMPOSE_CMD="podman compose"
+        ;;
+    docker)
+        if command -v docker-compose &> /dev/null; then
+            COMPOSE_CMD="docker-compose"
+        else
+            COMPOSE_CMD="docker compose"
+        fi
+        ;;
+    *)
+        echo "Unsupported orchestrator '${ORCHESTRATOR}'. Use 'podman' or 'docker'."
+        exit 1
+        ;;
+esac
 
 print_header
 restoreData "$@"

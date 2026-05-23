@@ -27,8 +27,46 @@ DOWNLOAD_FOL=./download
 rm -rf ${DOWNLOAD_FOL}
 mkdir -p ${DOWNLOAD_FOL}
 
+ORCHESTRATOR="podman"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --orchestrator)
+            ORCHESTRATOR="$2"
+            shift 2
+            ;;
+        --orchestrator=*)
+            ORCHESTRATOR="${1#*=}"
+            shift 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+ORCHESTRATOR="$(echo "${ORCHESTRATOR}" | tr '[:upper:]' '[:lower:]')"
+CONTAINER_CMD=""
+case "${ORCHESTRATOR}" in
+    podman)
+        CONTAINER_CMD="podman"
+        ;;
+    docker)
+        CONTAINER_CMD="docker"
+        ;;
+    *)
+        echo "Unsupported orchestrator '${ORCHESTRATOR}'. Use 'podman' or 'docker'."
+        exit 1
+        ;;
+esac
+
+if ! command -v "${CONTAINER_CMD}" &> /dev/null; then
+    echo "${CONTAINER_CMD} is not installed or not in PATH."
+    exit 1
+fi
+
 function volumeExists {
-  if [ "$(docker volume ls -f name=$1 | awk '{print $NF}' | grep -E '^'$1'$')" ]; then
+    if [ "$("${CONTAINER_CMD}" volume ls -f name=$1 | awk '{print $NF}' | grep -E '^'$1'$')" ]; then
     return 0
   else
     return 1
@@ -39,7 +77,7 @@ function readPrefixes(){
     echo ''
     echo 'Given below list of REDIS volumes, identify the prefix of source and destination volumes leaving "_redisdata" '
     echo '---------------------'
-    docker volume ls -q | grep -i "_redisdata"
+    ${CONTAINER_CMD} volume ls -q | grep -i "_redisdata"
     echo ''
     
     read -p "Provide the Source Volume Prefix : " SRC_VOL_PREFIX
@@ -80,20 +118,20 @@ function migrate(){
 
         echo "MIGRATING ${VOL_NAME_SUFFIX} FROM ${SRC_VOLUME} => ${DEST_VOLUME}"
     
-        TEMP_CONTAINER=$(docker run -d -v $SRC_VOLUME:$CONTAINER_VOL_FOLDER busybox true)
-        docker cp -q $TEMP_CONTAINER:$CONTAINER_VOL_FOLDER ${DOWNLOAD_FOL}/${VOL_NAME_SUFFIX}
-        docker rm $TEMP_CONTAINER &> /dev/null
+        TEMP_CONTAINER=$(${CONTAINER_CMD} run -d -v $SRC_VOLUME:$CONTAINER_VOL_FOLDER busybox true)
+        ${CONTAINER_CMD} cp -q $TEMP_CONTAINER:$CONTAINER_VOL_FOLDER ${DOWNLOAD_FOL}/${VOL_NAME_SUFFIX}
+        ${CONTAINER_CMD} rm $TEMP_CONTAINER &> /dev/null
         
-        TEMP_CONTAINER=$(docker run -d -v $DEST_VOLUME:$CONTAINER_VOL_FOLDER busybox true)
+        TEMP_CONTAINER=$(${CONTAINER_CMD} run -d -v $DEST_VOLUME:$CONTAINER_VOL_FOLDER busybox true)
         if [ "$VOL_NAME_SUFFIX" = "pgdata" ]; then
-            docker cp -q ${DOWNLOAD_FOL}/${VOL_NAME_SUFFIX} $TEMP_CONTAINER:$CONTAINER_VOL_FOLDER/_temp
-            docker run --rm -v $DEST_VOLUME:$CONTAINER_VOL_FOLDER \
+            ${CONTAINER_CMD} cp -q ${DOWNLOAD_FOL}/${VOL_NAME_SUFFIX} $TEMP_CONTAINER:$CONTAINER_VOL_FOLDER/_temp
+            ${CONTAINER_CMD} run --rm -v $DEST_VOLUME:$CONTAINER_VOL_FOLDER \
                     -e DATA_FOLDER="${CONTAINER_VOL_FOLDER}" \
                     busybox /bin/sh -c 'cp -Rf $DATA_FOLDER/_temp/* $DATA_FOLDER '
         else
-            docker cp -q ${DOWNLOAD_FOL}/${VOL_NAME_SUFFIX} $TEMP_CONTAINER:$CONTAINER_VOL_FOLDER   
+            ${CONTAINER_CMD} cp -q ${DOWNLOAD_FOL}/${VOL_NAME_SUFFIX} $TEMP_CONTAINER:$CONTAINER_VOL_FOLDER   
         fi
-        docker rm $TEMP_CONTAINER &> /dev/null
+        ${CONTAINER_CMD} rm $TEMP_CONTAINER &> /dev/null
 
         echo ''
     fi

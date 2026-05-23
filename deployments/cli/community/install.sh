@@ -15,6 +15,51 @@ CPU_ARCH=$(uname -m)
 OS_NAME=$(uname)
 UPPER_CPU_ARCH=$(tr '[:lower:]' '[:upper:]' <<< "$CPU_ARCH")
 
+ORCHESTRATOR="podman"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --orchestrator)
+            ORCHESTRATOR="$2"
+            shift 2
+            ;;
+        --orchestrator=*)
+            ORCHESTRATOR="${1#*=}"
+            shift 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+ORCHESTRATOR="$(echo "${ORCHESTRATOR}" | tr '[:upper:]' '[:lower:]')"
+CONTAINER_CMD=""
+COMPOSE_CMD=""
+case "${ORCHESTRATOR}" in
+    podman)
+        CONTAINER_CMD="podman"
+        COMPOSE_CMD="podman compose"
+        ;;
+    docker)
+        CONTAINER_CMD="docker"
+        if command -v docker-compose &> /dev/null; then
+            COMPOSE_CMD="docker-compose"
+        else
+            COMPOSE_CMD="docker compose"
+        fi
+        ;;
+    *)
+        echo "Unsupported orchestrator '${ORCHESTRATOR}'. Use 'podman' or 'docker'."
+        exit 1
+        ;;
+esac
+
+if ! command -v "${CONTAINER_CMD}" &> /dev/null; then
+    echo "${CONTAINER_CMD} is not installed or not in PATH."
+    exit 1
+fi
+
 mkdir -p $PLANE_INSTALL_DIR/archive
 DOCKER_FILE_PATH=$PLANE_INSTALL_DIR/docker-compose.yaml
 DOCKER_ENV_PATH=$PLANE_INSTALL_DIR/plane.env
@@ -79,7 +124,7 @@ function initialize(){
 
     local IMAGE_NAME=makeplane/plane-proxy
     local IMAGE_TAG=${APP_RELEASE}
-    docker manifest inspect "${IMAGE_NAME}:${IMAGE_TAG}" | grep -q "\"architecture\": \"${CPU_ARCH}\"" &
+    ${CONTAINER_CMD} manifest inspect "${IMAGE_NAME}:${IMAGE_TAG}" | grep -q "\"architecture\": \"${CPU_ARCH}\"" &
     local pid=$!
     spinner "$pid"
     
@@ -337,10 +382,10 @@ function download() {
 function startServices() {
     /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH --env-file=$DOCKER_ENV_PATH up -d --pull if_not_present --quiet-pull"
 
-    local migrator_container_id=$(docker container ls -aq -f "name=$SERVICE_FOLDER-migrator")
+    local migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=$SERVICE_FOLDER-migrator")
     if [ -n "$migrator_container_id" ]; then
         local idx=0
-        while docker inspect --format='{{.State.Status}}' $migrator_container_id | grep -q "running"; do
+        while ${CONTAINER_CMD} inspect --format='{{.State.Status}}' $migrator_container_id | grep -q "running"; do
             local message=">> Waiting for Data Migration to finish"
             local dots=$(printf '%*s' $idx | tr ' ' '.')
             echo -ne "\r$message$dots"
@@ -354,7 +399,7 @@ function startServices() {
 
     # if migrator exit status is not 0, show error message and exit
     if [ -n "$migrator_container_id" ]; then
-        local migrator_exit_code=$(docker inspect --format='{{.State.ExitCode}}' $migrator_container_id)
+        local migrator_exit_code=$(${CONTAINER_CMD} inspect --format='{{.State.ExitCode}}' $migrator_container_id)
         if [ $migrator_exit_code -ne 0 ]; then
             echo "Plane Server failed to start ❌"
             # stopServices
@@ -365,7 +410,7 @@ function startServices() {
         fi
     fi
 
-    local api_container_id=$(docker container ls -q -f "name=$SERVICE_FOLDER-api")
+    local api_container_id=$(${CONTAINER_CMD} container ls -q -f "name=$SERVICE_FOLDER-api")
 
     # Verify container exists
     if [ -z "$api_container_id" ]; then
@@ -379,7 +424,7 @@ function startServices() {
     local start_time=$(date +%s)
 
     echo "   Waiting for API Service to be ready..."
-    while ! docker exec "$api_container_id" python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=3)" > /dev/null 2>&1; do
+    while ! ${CONTAINER_CMD} exec "$api_container_id" python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=3)" > /dev/null 2>&1; do
         local current_time=$(date +%s)
         local elapsed_time=$((current_time - start_time))
 
@@ -387,7 +432,7 @@ function startServices() {
             echo ""
             echo "   API Service health check timed out after 5 minutes"
             echo "   Checking if API container is still running..."
-            if docker ps | grep -q "$SERVICE_FOLDER-api"; then
+            if ${CONTAINER_CMD} ps | grep -q "$SERVICE_FOLDER-api"; then
                 echo "   API container is running but did not pass the health-check. Continuing without marking it ready."
                 api_ready=false
                 break
@@ -559,7 +604,7 @@ function backup_container_dir() {
 
     # Copy the data directory from the running container
     echo "Copying $CONTAINER_NAME data directory..."
-    docker cp -q "$CONTAINER_ID:$CONTAINER_DATA_DIR/." "$BACKUP_FOLDER/$SERVICE_FOLDER/"
+    ${CONTAINER_CMD} cp -q "$CONTAINER_ID:$CONTAINER_DATA_DIR/." "$BACKUP_FOLDER/$SERVICE_FOLDER/"
     local cp_status=$?
 
     if [ $cp_status -ne 0 ]; then
@@ -668,14 +713,6 @@ function askForAction() {
         echo "INVALID ACTION SUPPLIED"
     fi
 }
-
-# if docker-compose is installed
-if command -v docker-compose &> /dev/null
-then
-    COMPOSE_CMD="docker-compose"
-else
-    COMPOSE_CMD="docker compose"
-fi
 
 if [ "$CPU_ARCH" == "x86_64" ] || [ "$CPU_ARCH" == "amd64" ]; then
     CPU_ARCH="amd64"
