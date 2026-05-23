@@ -364,7 +364,11 @@ function download() {
     else
         CUSTOM_BUILD="false"
         updateCustomVariables
-        /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH --env-file=$DOCKER_ENV_PATH pull --policy always"
+        PULL_ARGS="pull"
+        if [ "${ORCHESTRATOR}" = "docker" ]; then
+            PULL_ARGS="pull --policy ${PULL_POLICY}"
+        fi
+        /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH --env-file=$DOCKER_ENV_PATH ${PULL_ARGS}"
 
         if [ $? -ne 0 ]; then
             echo ""
