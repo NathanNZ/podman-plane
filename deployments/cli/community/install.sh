@@ -196,6 +196,30 @@ function updateEnvFile() {
     fi
 }
 
+function getContainerIdByService() {
+    local service=$1
+    local include_all=$2
+    local ls_flags="-q"
+
+    if [ "$include_all" = "true" ]; then
+        ls_flags="-aq"
+    fi
+
+    local id
+    id=$(${CONTAINER_CMD} container ls ${ls_flags} \
+        -f "label=com.docker.compose.project=${SERVICE_FOLDER}" \
+        -f "label=com.docker.compose.service=${service}" | head -n 1)
+
+    if [ -z "$id" ]; then
+        id=$(${CONTAINER_CMD} container ls ${ls_flags} -f "name=${SERVICE_FOLDER}_${service}" | head -n 1)
+        if [ -z "$id" ]; then
+            id=$(${CONTAINER_CMD} container ls ${ls_flags} -f "name=${SERVICE_FOLDER}-${service}" | head -n 1)
+        fi
+    fi
+
+    echo "$id"
+}
+
 function updateCustomVariables(){
     echo "Updating custom variables..." >&2
     updateEnvFile "DOCKERHUB_USER" "$DOCKERHUB_USER" "$DOCKER_ENV_PATH"
@@ -390,15 +414,7 @@ function startServices() {
     fi
     /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH --env-file=$DOCKER_ENV_PATH ${START_ARGS}"
 
-    local migrator_container_id=$(${CONTAINER_CMD} container ls -aq \
-        -f "label=com.docker.compose.project=${SERVICE_FOLDER}" \
-        -f "label=com.docker.compose.service=migrator")
-    if [ -z "$migrator_container_id" ]; then
-        migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=${SERVICE_FOLDER}_migrator")
-        if [ -z "$migrator_container_id" ]; then
-            migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=${SERVICE_FOLDER}-migrator")
-        fi
-    fi
+    local migrator_container_id=$(getContainerIdByService "migrator" "true")
     if [ -n "$migrator_container_id" ]; then
         local idx=0
         while ${CONTAINER_CMD} inspect --format='{{.State.Status}}' $migrator_container_id | grep -q "running"; do
@@ -426,15 +442,7 @@ function startServices() {
         fi
     fi
 
-    local api_container_id=$(${CONTAINER_CMD} container ls -q \
-        -f "label=com.docker.compose.project=${SERVICE_FOLDER}" \
-        -f "label=com.docker.compose.service=api")
-    if [ -z "$api_container_id" ]; then
-        api_container_id=$(${CONTAINER_CMD} container ls -q -f "name=${SERVICE_FOLDER}_api")
-        if [ -z "$api_container_id" ]; then
-            api_container_id=$(${CONTAINER_CMD} container ls -q -f "name=${SERVICE_FOLDER}-api")
-        fi
-    fi
+    local api_container_id=$(getContainerIdByService "api" "false")
 
     # Verify container exists
     if [ -z "$api_container_id" ]; then
@@ -456,9 +464,7 @@ function startServices() {
             echo ""
             echo "   API Service health check timed out after 5 minutes"
             echo "   Checking if API container is still running..."
-            if ${CONTAINER_CMD} ps -q \
-                -f "label=com.docker.compose.project=${SERVICE_FOLDER}" \
-                -f "label=com.docker.compose.service=api" | grep -q .; then
+            if [ -n "$(getContainerIdByService "api" "false")" ]; then
                 echo "   API container is running but did not pass the health-check. Continuing without marking it ready."
                 api_ready=false
                 break
@@ -534,14 +540,18 @@ function upgrade() {
 }
 function viewSpecificLogs(){
     local SERVICE_NAME=$1
+    local container_id
+    container_id=$(getContainerIdByService "$SERVICE_NAME" "true")
 
-    if /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH ps | grep -q '$SERVICE_NAME'"; then
+    if [ -n "$container_id" ]; then
         echo "Service '$SERVICE_NAME' is running."
     else
         echo "Service '$SERVICE_NAME' is not running."
     fi
 
-    /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH logs -f $SERVICE_NAME"
+    if [ -n "$container_id" ]; then
+        ${CONTAINER_CMD} logs -f "$container_id"
+    fi
 }
 function viewLogs(){
     
@@ -619,7 +629,8 @@ function backup_container_dir() {
     local SERVICE_FOLDER=$4
 
     echo "Backing up $CONTAINER_NAME data..."
-    local CONTAINER_ID=$(/bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH ps -q $CONTAINER_NAME")
+    local CONTAINER_ID
+    CONTAINER_ID=$(getContainerIdByService "$CONTAINER_NAME" "false")
     if [ -z "$CONTAINER_ID" ]; then
         echo "Error: $CONTAINER_NAME container not found. Make sure the services are running."
         return 1
