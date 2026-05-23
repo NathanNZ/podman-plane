@@ -384,7 +384,11 @@ function download() {
     echo ""
 }
 function startServices() {
-    /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH --env-file=$DOCKER_ENV_PATH up -d --pull if_not_present --quiet-pull"
+    START_ARGS="up -d"
+    if [ "${ORCHESTRATOR}" = "docker" ]; then
+        START_ARGS="up -d --pull if_not_present --quiet-pull"
+    fi
+    /bin/bash -c "$COMPOSE_CMD -f $DOCKER_FILE_PATH --env-file=$DOCKER_ENV_PATH ${START_ARGS}"
 
     local migrator_container_id=$(${CONTAINER_CMD} container ls -aq -f "name=$SERVICE_FOLDER-migrator")
     if [ -n "$migrator_container_id" ]; then
